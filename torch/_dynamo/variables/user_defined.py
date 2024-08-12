@@ -1234,6 +1234,31 @@ class RemovableHandleVariable(VariableTracker):
         return RemovableHandleClass
 
 
+class UnsupportedRemovableMultiHandleVariable(VariableTracker):
+    """
+    This variable class is only for removable multi-handles that are registered and removed
+    in two different frames.
+    Our current infra requires the hook to be registered and removed in the same frame.
+    So for these invalid hooks, we only support its `.remove()` method and graph break
+    on all other methods.
+    """
+
+    def __init__(
+        self,
+        value,
+        **kwargs,
+    ):
+        super().__init__(**kwargs)
+        self.value = value
+
+    def call_method(self, tx, method_name, args, kwargs):
+        if method_name == "remove":
+            self.value.remove()
+            return variables.ConstantVariable.create(None)
+        else:
+            unimplemented("unregistered hook removable multi-handle")
+
+
 class MutableMappingVariable(UserDefinedObjectVariable):
     _nonvar_fields = UserDefinedObjectVariable._nonvar_fields
 

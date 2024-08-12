@@ -188,6 +188,7 @@ from .user_defined import (
     KeyedJaggedTensorVariable,
     MutableMappingVariable,
     SourcelessGraphModuleVariable,
+    UnsupportedRemovableMultiHandleVariable,
     UserDefinedClassVariable,
     UserDefinedObjectVariable,
     WeakRefVariable,
@@ -410,6 +411,7 @@ class VariableBuilder:
             (re.Pattern, cls.wrap_regex_pattern),
             (weakref.ReferenceType, cls.wrap_weakref),
             (torch.utils.hooks.RemovableHandle, cls.wrap_removable_handle),
+            (torch.autograd.graph._MultiHandle, cls.wrap_removable_multi_handle),
             (torch.jit.ScriptFunction, cls.wrap_jit_function),
         ]
 
@@ -439,6 +441,10 @@ class VariableBuilder:
         # the same frame. So graph break.
         # Related test - PYTORCH_TEST_WITH_DYNAMO=1 python test/test_autograd.py -k TestAutograd.test_hooks
         unimplemented("unregistered hook removable handle")
+
+    def wrap_removable_multi_handle(self, value):
+        self.install_guards(GuardBuilder.TYPE_MATCH)
+        return UnsupportedRemovableMultiHandleVariable(value)
 
     def wrap_jit_function(self, value):
         self.install_guards(GuardBuilder.TYPE_MATCH)
