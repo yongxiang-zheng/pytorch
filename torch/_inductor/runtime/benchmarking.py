@@ -2,12 +2,12 @@ import time
 from functools import cached_property, wraps
 from statistics import median
 from typing import Any, Callable, Dict, List, Tuple
-from typing_extensions import ParamSpec, Self, TypeVar
+from typing_extensions import Concatenate, ParamSpec, Self, TypeVar
 
 import torch
 
 
-log = torch._logging.getArtifactLogger(__name__, "benchmarking")
+logger = torch._logging.getArtifactLogger(__name__, "benchmarking")
 
 
 MILLISECONDS_PER_SECOND = 1000
@@ -16,20 +16,30 @@ P = ParamSpec("P")
 T = TypeVar("T")
 
 
-def maybe_time(fn: Callable[P, T]) -> Callable[P, T]:
+def maybe_time(
+    fn: Callable[Concatenate[Any, P], T]
+) -> Callable[Concatenate[Any, P], T]:
+    """Wrapper that logs the duration of `fn`, in milliseconds, along with a representation
+    of the function's args and kwargs, if logging is enabled. It is expected that `fn` is
+    a method of `Benchmarker` or one of its subclasses; typing limitations prevent us from
+    declaring this directly. If logging is disabled, this becomes a no-op.
+    """
+
+    # no-op if benchmarking-specific logging is disabled
     if not torch._logging._internal.log_state.is_artifact_enabled("benchmarking"):
         return fn
 
     @wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        start_s = time.perf_counter()
+    def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> T:
+        start_t = time.perf_counter()
         result = fn(*args, **kwargs)
-        log.debug(
-            "fn:%r args:[%r, %r] took %f seconds.",
+        logger.debug(
+            "Call `benchmarking.%s.%s(*args=%r, **kwargs=%r)` took %f milliseconds.",
+            self.__class__.__name__,
             fn.__name__,
             args,
             kwargs,
-            time.perf_counter() - start_s,
+            (time.perf_counter() - start_t) * MILLISECONDS_PER_SECOND,
         )
         return result
 
