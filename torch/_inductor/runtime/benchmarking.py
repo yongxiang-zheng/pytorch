@@ -6,6 +6,8 @@ from typing_extensions import Concatenate, ParamSpec, Self, TypeVar
 
 import torch
 
+from torch._dynamo.utils import counters
+
 
 logger = torch._logging.getArtifactLogger(__name__, "benchmarking")
 
@@ -46,11 +48,32 @@ def maybe_time(
     return wrapper
 
 
+def count(fn: Callable[Concatenate[Any, P], T]) -> Callable[Concatenate[Any, P], T]:
+    """Wrapper that increments relevant dynamo counters on `fn` call. It is expected that
+    `fn` is a method of `Benchmarker` or one of its subclass; typing limitations prevent
+    us from declaring this directly. The counter incrementation follows the formula,
+
+    `counters["inductor"]["benchmarking.Foo.bar] += 1`
+
+    where `Foo` is the class whose' instance called the function, and `bar` is the function name.
+    """
+
+    @wraps(fn)
+    def wrapper(self: Any, *args: P.args, **kwargs: P.kwargs) -> T:
+        counters["inductor"][
+            "benchmarking." + self.__class__.__name__ + "." + fn.__name__
+        ] += 1
+        return fn(self, *args, **kwargs)
+
+    return wrapper
+
+
 class Benchmarker:
     def __init__(self: Self) -> None:
         pass
 
     @maybe_time
+    @count
     def benchmark(
         self: Self,
         fn: Callable[..., Any],
@@ -102,6 +125,7 @@ class Benchmarker:
         return self.benchmark_gpu(_callable, **kwargs)
 
     @maybe_time
+    @count
     def benchmark_cpu(
         self: Self, _callable: Callable[[], Any], warmup: int = 20, rep: int = 100
     ) -> float:
@@ -136,6 +160,7 @@ class Benchmarker:
         run_for(warmup)
         return median(run_for(rep))
 
+    @count
     def benchmark_gpu(self: Self, *args: Any, **kwargs: Any) -> float:
         raise NotImplementedError
 
@@ -143,6 +168,7 @@ class Benchmarker:
 class TritonBenchmarker(Benchmarker):
     @cached_property
     @maybe_time
+    @count
     def triton_do_bench(self: Self) -> Callable[..., Any]:
         """Lazily import Triton's `do_bench`."""
         try:
@@ -152,6 +178,7 @@ class TritonBenchmarker(Benchmarker):
         return do_bench
 
     @maybe_time
+    @count
     def benchmark_gpu(self: Self, _callable: Callable[[], Any], **kwargs: Any) -> float:
         """Benchmark the GPU callable, `_callable`, and return the runtime, in milliseconds.
 
