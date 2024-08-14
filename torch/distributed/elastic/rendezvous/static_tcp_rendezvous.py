@@ -44,6 +44,7 @@ class StaticTCPRendezvous(RendezvousHandler):
         world_size: int,
         run_id: str,
         timeout: int,
+        use_libuv: bool = True,
     ):
         self.master_addr = master_addr
         self.master_port = master_port
@@ -52,6 +53,7 @@ class StaticTCPRendezvous(RendezvousHandler):
         self.run_id = run_id
         self.timeout = datetime.timedelta(seconds=timeout)
         self._store: Optional[Store] = None
+        self.use_libuv = use_libuv
 
     def get_backend(self) -> str:
         return "static"
@@ -71,6 +73,7 @@ class StaticTCPRendezvous(RendezvousHandler):
                 is_master,
                 self.timeout,
                 multi_tenant=True,
+                use_libuv=self.use_libuv,
             )
         store = PrefixStore(self.run_id, self._store)
         # TCPStore server instance is used by trainer code
@@ -122,6 +125,10 @@ def create_rdzv_handler(params: RendezvousParameters) -> RendezvousHandler:
         timeout = int(params.config["timeout"])
     else:
         timeout = _default_timeout_seconds
+
+    use_libuv = params.get_as_bool("use_libuv", True)
+    use_libuv = use_libuv is None or use_libuv
+
     return StaticTCPRendezvous(
-        master_addr, master_port, rank, world_size, run_id, timeout
+        master_addr, master_port, rank, world_size, run_id, timeout, use_libuv
     )
