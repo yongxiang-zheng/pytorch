@@ -3,7 +3,7 @@
 
 import logging
 import math
-from typing import Any, List, Tuple
+from typing import Any, List, Optional, Tuple
 
 import sympy
 
@@ -18,12 +18,13 @@ from ..ir import (
     FixedLayout,
     FlexibleLayout,
     InputBuffer,
+    IRNode,
     StorageBox,
     Subgraph,
     TensorBox,
 )
 from ..lowering import empty, empty_strided, lowerings, register_lowering
-from ..select_algorithm import autotune_select_algorithm, TritonTemplate
+from ..select_algorithm import autotune_select_algorithm, realize_inputs, TritonTemplate
 
 
 log = logging.getLogger(__name__)
@@ -47,6 +48,11 @@ def create_placeholder(
     """Creates a placeholder input buffers for producing subgraph_output."""
     input_buffer = InputBuffer(name, FixedLayout(device, dtype, [], []))
     return TensorBox.create(input_buffer)
+
+
+def maybe_realize(args: List[Optional[IRNode]]):
+    """Accepts a list of optional IRNodes and returns a list of realized IRNodes"""
+    return tree_map(lambda x: realize_inputs(x) if x is not None else None, args)
 
 
 def build_subgraph_buffer(
@@ -686,21 +692,34 @@ def flex_attention(
             score_mod_other_buffers,
             mask_mod_other_buffers,
         )
-    for buf in [
+
+    (
         query,
         key,
         value,
         kv_num_blocks,
         kv_indices,
-        q_num_blocks,
-        q_indices,
         full_kv_num_blocks,
         full_kv_indices,
+        q_num_blocks,
+        q_indices,
         full_q_num_blocks,
         full_q_indices,
-    ]:
-        if buf is not None:
-            buf.realize()
+    ) = maybe_realize(
+        [
+            query,
+            key,
+            value,
+            kv_num_blocks,
+            kv_indices,
+            full_kv_num_blocks,
+            full_kv_indices,
+            q_num_blocks,
+            q_indices,
+            full_q_num_blocks,
+            full_q_indices,
+        ]
+    )
 
     layout = FixedLayout(
         query.get_device(),
@@ -1524,7 +1543,7 @@ def flex_attention_backward(*args, **kwargs):
         mask_graph,
     ) = block_mask
 
-    for buf in [
+    (
         query,
         key,
         value,
@@ -1537,9 +1556,22 @@ def flex_attention_backward(*args, **kwargs):
         q_indices,
         full_q_num_blocks,
         full_q_indices,
-    ]:
-        if buf is not None:
-            buf.realize()
+    ) = maybe_realize(
+        [
+            query,
+            key,
+            value,
+            grad_out,
+            kv_num_blocks,
+            kv_indices,
+            full_kv_num_blocks,
+            full_kv_indices,
+            q_num_blocks,
+            q_indices,
+            full_q_num_blocks,
+            full_q_indices,
+        ]
+    )
 
     if _use_flex_decoding(query):
         raise NotImplementedError("Flex decoding backward pass is not implemented. ")
@@ -1594,6 +1626,8 @@ def flex_attention_backward(*args, **kwargs):
     delta = lowerings[aten.sum](mul_delta, axis=-1)
     delta = lowerings[aten.sub](delta, grad_lse_exp2)
     delta = ExternKernel.require_contiguous(delta)
+
+    grad_lse_exp2, delta = maybe_realize([grad_lse_exp2, delta])
 
     # see NOTE:[TritonTemplates with multiple outputs]
     grad_query = empty_strided(
