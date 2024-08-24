@@ -9,6 +9,7 @@ from collections import defaultdict
 from typing import Dict, List, Set, TYPE_CHECKING
 
 import torch
+import logging
 
 from . import config, ir
 from .dependencies import WeakDep
@@ -24,6 +25,7 @@ from .utils import (
 
 
 overlap_log = torch._logging.getArtifactLogger(__name__, "overlap")
+log = logging.getLogger("torch")
 
 if TYPE_CHECKING:
     from .scheduler import BaseSchedulerNode
@@ -107,6 +109,8 @@ def _schedule_for_comm(
     buf_name_to_snode = {}
     name_to_fused_node = {}
     scores_0, scores_1, scores_2 = {}, {}, {}
+    output_name_to_comm_snode = {}
+    comm_to_wait = {}
     for idx, snode in enumerate(snodes):
         for buf_name in snode.get_buffer_names():
             buf_name_to_snode[buf_name] = snode
@@ -120,6 +124,24 @@ def _schedule_for_comm(
         scores_1[node_name] = 0
         scores_2[node_name] = idx
 
+        # Always prefer scheduling resize-to-0 op as early as possible
+        if isinstance(snode.node, ir.ResizeStorageBytes) and snode.node.constant_args[0] == 0:
+            scores_0[node_name] = 0
+
+        if contains_collective(snode):
+            for output in snode.get_outputs():
+                output_name_to_comm_snode[output.get_name()] = snode
+        if contains_wait(snode):
+            wait_snode = snode
+            for dep in wait_snode.unmet_dependencies:
+                # print(f"dep.name: {dep.name}")
+                # print(f"output_name_to_comm_snode.keys(): {output_name_to_comm_snode.keys()}")
+                # print(f"dep.name in output_name_to_comm_snode: {dep.name in output_name_to_comm_snode}")
+                if dep.name in output_name_to_comm_snode:
+                    comm_snode = output_name_to_comm_snode[dep.name]
+                    comm_to_wait[comm_snode] = wait_snode
+                    break
+            
     comm_idx = 0
     for snode in snodes:
         if raise_comms and contains_collective(snode):
@@ -160,15 +182,19 @@ def _schedule_for_comm(
             buffer_users[dep].add(snode)
 
     scheduled = []
+    scheduled_set = set()
 
     def schedule(snode):
         """
         Schedules `snode` and put all unblocked nodes onto the ready queue.
         """
+        if snode in scheduled_set:
+            return
         scheduled.append(snode)
+        scheduled_set.add(snode)
         for buf_name in snode.get_buffer_names():
             for snode in buffer_users[buf_name]:
-                unmet_deps[snode].remove(buf_name)
+                unmet_deps[snode].discard(buf_name)
                 if len(unmet_deps[snode]) == 0:
                     heapq.heappush(ready, Runnable(snode))
 
@@ -200,12 +226,17 @@ def _schedule_for_comm(
             collective_cost > 0
             and (candidate := get_overlapping_candidate()) is not None
         ):
+            # print("looking for candidate!")
             ready.remove(candidate)
             schedule(candidate.snode)
             collective_cost -= snode_to_cost[candidate.snode]
+        # # Schedule the comm node's corresponding wait node
+        # wait_snode = comm_to_wait[snode]
+        # schedule(wait_snode)
         heapq.heapify(ready)
 
     while len(ready):
+        # print("popping from ready queue!")
         snode = heapq.heappop(ready).snode
         if reorder_for_overlap and contains_collective(snode):
             schedule_collective_for_overlap(snode)
@@ -216,7 +247,14 @@ def _schedule_for_comm(
         assert len(deps) == 0, (
             f"Detected unscheduled nodes. {unmet_deps}"
         )
-    return scheduled
+
+    # HACK(yf225): remove resize-0 ops at beginning of graph, because they might be secret aliases
+    first_non_resize_0_node_idx = None
+    for i, snode in enumerate(scheduled):
+        if not (isinstance(snode.node, ir.ResizeStorageBytes) and snode.node.constant_args[0] == 0):
+            first_non_resize_0_node_idx = i
+            break
+    return scheduled[first_non_resize_0_node_idx:]
 
 
 def decide_global_ordering_of_comms(
@@ -290,7 +328,7 @@ def visualize_overlap(order):
             if contains_collective(snode):
                 total_est_runtime += estimate_op_runtime(snode)
                 cur_comm_node = snode.node
-            elif is_wait(snode.node):
+            elif contains_wait(snode):
                 raise AssertionError(
                     "Wait is not expected when there is no collective running"
                 )
@@ -303,7 +341,7 @@ def visualize_overlap(order):
                     "Found two collectives running at the same time. "
                     "`visualize_overlap` needs to be updated to handle this case"
                 )
-            elif is_wait(snode.node):  # end of this comm op
+            elif contains_wait(snode):  # end of this comm op
                 overlap_log.debug(f"{node_summary(snode)}")  # noqa: G004
                 cur_comm_node = None
             else:  # overlapped compute op
