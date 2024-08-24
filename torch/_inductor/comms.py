@@ -214,8 +214,7 @@ def _schedule_for_comm(
 
     for snode, deps in unmet_deps.items():
         assert len(deps) == 0, (
-            "Detected unscheduled nodes. "
-            f"Nodes with unmet dependencies: {unmet_deps}"
+            f"Detected unscheduled nodes. {unmet_deps}"
         )
     return scheduled
 
@@ -509,12 +508,11 @@ def enforce_comm_ordering_for_fsdp(
                 name_to_fused_node,
             )
 
-            # Find the "all_gather + all_gather_wait_tensor + copy_out + set_" code block
+            # Find the "all_gather + all_gather_wait_tensor + copy_out + resize_ + copy_" code block
             allowed_ops = {
                 torch.ops._c10d_functional.all_gather_into_tensor_out.default,
                 torch.ops._c10d_functional.wait_tensor.default,
                 torch.ops.fsdp.split_with_sizes_copy.default,
-                torch.ops.aten.set_.source_Tensor,
             }
             find_recursive_users_of_node(
                 ag_snode,
@@ -526,6 +524,10 @@ def enforce_comm_ordering_for_fsdp(
                     or (
                         isinstance(x, scheduler.ExternKernelSchedulerNode)
                         and x.node.op_overload in allowed_ops  # type: ignore[union-attr]
+                    )
+                    or (
+                        isinstance(x, scheduler.SchedulerNode) and isinstance(x.node, ir.ComputedBuffer) and isinstance(x.node.data, ir.Pointwise)
+                        and len(x.node.data.origins) == 1 and list(x.node.data.origins)[0].target is torch.ops.fsdp.copy_.default
                     )
                 ),
             )
@@ -551,6 +553,11 @@ def enforce_comm_ordering_for_fsdp(
 
             ag_related_snodes = ag_related_snodes[:end_idx_of_current_ag_block]
 
+            # sort nodes by original operation order
+            ag_related_snodes = sorted(
+                ag_related_snode_set, key=lambda x: get_op_idx(x)
+            )
+
             # Group "cast + copy_in + getitem + all_gather" into one GroupedSchedulerNode
             wait_node_idx = None
             for i in range(len(ag_related_snodes) - 1):
@@ -560,7 +567,7 @@ def enforce_comm_ordering_for_fsdp(
             assert wait_node_idx is not None
             ag_group_node = _create_group_node(ag_related_snodes[:wait_node_idx])
 
-            # Group "all_gather_wait_tensor + copy_out + set_" into one GroupedSchedulerNode
+            # Group "all_gather_wait_tensor + copy_out + copy_" into one GroupedSchedulerNode
             ag_wait_group_node = _create_group_node(ag_related_snodes[wait_node_idx:])
 
             ag_grouped_node_to_wait_grouped_node[ag_group_node] = ag_wait_group_node
