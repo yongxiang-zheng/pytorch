@@ -70,7 +70,7 @@ from typing import (
     TypeVar,
     Union,
 )
-from typing_extensions import Self, TypeGuard
+from typing_extensions import Self, TypeIs
 
 import torch
 import torch._guards
@@ -236,7 +236,7 @@ class Match:
             if trace_fn is None:
                 trace_fn = functools.partial(fwd_only, run_dce=run_dce)
             replacement = trace_fn(
-                replacement_fn, torch.fx.map_arg(args, lambda arg: arg.meta["val"])  # type: ignore[arg-type]
+                replacement_fn, torch.fx.map_arg(args, lambda arg: arg.meta["val"])
             )
             ReplacementPatternEntry.replace_with_graph(
                 self,
@@ -277,10 +277,10 @@ class FailedMatch(RuntimeError):
 MatchResult = Union[Match, FailedMatch]
 
 
-def is_match(m: MatchResult) -> TypeGuard[Match]:
+def is_match(m: MatchResult) -> TypeIs[Match]:
     """
-    TypeGuards cannot act on `self`. Thus this function exists to let mypy
-    recognize FailedMatch.__bool__ as a TypeGuard.
+    TypeIs cannot act on `self`. Thus this function exists to let mypy
+    recognize FailedMatch.__bool__ as a TypeIs.
     """
     return bool(m)
 
@@ -607,7 +607,7 @@ class _TargetArgsExpr(_TargetExpr):
             from torch.fx.operator_schemas import normalize_function
 
             normalized_args_and_kwargs = normalize_function(
-                node.target, node.args, node.kwargs  # type: ignore[arg-type]
+                node.target, node.args, node.kwargs
             )
 
             if normalized_args_and_kwargs is None:
@@ -1036,7 +1036,7 @@ class ReplacementPatternEntry(PatternEntry):
                 if node.op == "call_function":
                     target = node.target
                     args, kwargs = self.fetch_args_kwargs_from_env(node)
-                    result = graph.call_function(target, args, kwargs)  # type: ignore[arg-type]
+                    result = graph.call_function(target, args, kwargs)
                     if "val" in node.meta and "val" not in result.meta:
                         result.meta["val"] = node.meta["val"]
                         if isinstance(node.meta["val"], torch.Tensor):
@@ -1080,7 +1080,7 @@ class ReplacementPatternEntry(PatternEntry):
                     queue.extend(arg.all_input_nodes)
 
         with graph.inserting_before(last_node):
-            replacement = Replacer(replacement_graph).run(*args)  # type: ignore[arg-type]
+            replacement = Replacer(replacement_graph).run(*args)
             if isinstance(replacement, torch.fx.Node):
                 replacement = [replacement]
 
@@ -1101,7 +1101,7 @@ class ReplacementPatternEntry(PatternEntry):
                     return
                 assert isinstance(old, torch.fx.Node)
                 if new is None:
-                    old.replace_all_uses_with(None)  # type: ignore[arg-type]
+                    old.replace_all_uses_with(None)
                     graph.erase_node(old)
                     return
                 if isinstance(new, torch.fx.Node):
@@ -1124,6 +1124,7 @@ class ReplacementPatternEntry(PatternEntry):
                     graph.erase_node(old)
                     return
 
+                new = typing.cast(Sequence[torch.fx.Node], new)
                 # `new` is not a node: it's a list of nodes.
                 #
                 # This happens when we want to replace a node that has a single
@@ -1156,7 +1157,7 @@ class ReplacementPatternEntry(PatternEntry):
                     idx = maybe_getitem(user)
                     if idx is None:
                         raise AssertionError("can't handle")
-                    replace(user, new[idx])  # type: ignore[index]
+                    replace(user, new[idx])
                 graph.erase_node(old)
 
             if len(output_nodes) == len(replacement):
@@ -1232,7 +1233,7 @@ def register_replacement(
                 )
 
         args = list(
-            torch.fx.map_arg(  # type: ignore[arg-type]
+            torch.fx.map_arg(
                 [match.kwargs[name] for name in argnames], lambda n: n.meta["val"]
             )
         )
@@ -1671,8 +1672,8 @@ class PatternMatcherPass:
             raise RuntimeError(
                 f"The input to PatternMatcherPass must be a GraphModule or a Graph, but got {type(gm)}"
             )
-        if should_compute_mutation_region_ids(graph):  # type: ignore[arg-type]
-            compute_mutation_region_ids(graph)  # type: ignore[arg-type]
+        if should_compute_mutation_region_ids(graph):
+            compute_mutation_region_ids(graph)
         get_mutation_region_id_partial = functools.partial(
             get_mutation_region_id, graph
         )
@@ -1763,7 +1764,7 @@ def fx_to_pattern(
         get_attr = _not_implemented
 
         def placeholder(
-            self, target: str, args: Sequence[Any], kwargs: Mapping[str, Any]  # type: ignore[override]
+            self, target: str, args: Sequence[Any], kwargs: Mapping[str, Any]
         ) -> Union[ExclusiveKeywordArg, KeywordArg]:
             n = next(argnum)
             if n < len(argnames):
@@ -1780,7 +1781,7 @@ def fx_to_pattern(
                 return KeywordArg(name)
 
         def call_function(
-            self, target: str, args: Sequence[Any], kwargs: Mapping[str, Any]  # type: ignore[override]
+            self, target: str, args: Sequence[Any], kwargs: Mapping[str, Any]
         ) -> PatternExpr:
             args, kwargs = pytree.tree_map(process_arg, (args, kwargs))
             if list in ignore_types:
@@ -1799,7 +1800,7 @@ def fx_to_pattern(
                 rv.users = len(n.users)
             return rv
 
-    pattern = Converter(gm).run()  # type: ignore[arg-type]
+    pattern = Converter(gm).run()
     if not isinstance(pattern, PatternExpr):
         return MultiOutputPattern(pytree.tree_leaves(pattern))
     return pattern
