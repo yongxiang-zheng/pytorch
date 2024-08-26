@@ -54,19 +54,13 @@ def patch_init_py(
 def patch_setup_py(path: Path) -> None:
     with open(path) as f:
         orig = f.read()
-    try:
-        orig = check_and_replace(
-            orig,
-            "https://tritonlang.blob.core.windows.net/llvm-builds/",
-            "https://oaitriton.blob.core.windows.net/public/llvm-builds/",
-        )
-        with open(path, "w") as f:
-            f.write(orig)
-    except RuntimeError as e:
-        print(
-            f"Applying patch_setup_py() for llvm-build package failed: {e}.",
-            "If you are trying to build a newer version of Triton, you can ignore this.",
-        )
+    orig = check_and_replace(
+        orig,
+        "https://tritonlang.blob.core.windows.net/llvm-builds/",
+        "https://oaitriton.blob.core.windows.net/public/llvm-builds/",
+    )
+    with open(path, "w") as f:
+        f.write(orig)
 
 
 def build_triton(

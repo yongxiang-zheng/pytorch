@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import functools
+import os
 from typing import List, Optional
 
 from .. import config
@@ -64,7 +65,12 @@ class DebugPrinterManager:
     def get_debug_filtered_kernel_names(self) -> List[str]:
         return [
             x.strip()
-            for x in config.aot_inductor.filtered_kernel_names.lower().split(",")
+            for x in os.environ.get(
+                "AOT_INDUCTOR_FILTERED_KERNELS_TO_PRINT",
+                self.DEBUG_FILTER_DEFAULT_PRINT_ALL,
+            )
+            .lower()
+            .split(",")
         ]
 
     def codegen_intermediate_tensor_value_printer(
