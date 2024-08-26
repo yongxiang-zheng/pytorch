@@ -213,7 +213,7 @@ def normalize_sizes(sizes: Union[Shape, Tuple[Shape]]) -> Shape:
     if isinstance(sizes[0], int):
         return cast(Shape, sizes)
     elif len(sizes) == 1:
-        return sizes[0]
+        return cast(Shape, sizes[0])  # type: ignore[redundant-cast]
     else:
         raise RuntimeError("Size must be int... or tuple")
 

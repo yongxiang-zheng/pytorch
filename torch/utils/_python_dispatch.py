@@ -4,7 +4,7 @@ import contextlib
 import warnings
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Set, Union, Protocol, Tuple, Sequence, overload, Deque
-from typing_extensions import TypeGuard
+from typing_extensions import TypeIs
 from collections import deque
 
 import torch
@@ -354,7 +354,7 @@ class TensorWithFlatten(Protocol):
 
 
 
-def is_traceable_wrapper_subclass(t: object) -> TypeGuard[TensorWithFlatten]:
+def is_traceable_wrapper_subclass(t: object) -> TypeIs[TensorWithFlatten]:
     """
     Returns whether or not a tensor subclass that implements __torch_dispatch__
     is 'traceable' with torch.compile.
@@ -615,7 +615,7 @@ def return_and_correct_aliasing(func, args, kwargs, out):
         return None
 
     def get_arg_from_alias(output_alias, schema_info, args, kwargs):
-        new_args, new_kwargs = torch.fx.operator_schemas.normalize_function(  # type: ignore[misc]
+        new_args, new_kwargs = torch.fx.operator_schemas.normalize_function(
             func, args=args, kwargs=kwargs
         )
 
