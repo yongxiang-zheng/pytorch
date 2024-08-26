@@ -333,14 +333,27 @@ def argsort_equal_checker(
     rtol=None,
     exact_dtype=True,
 ):
-    self.assertEqual(
-        ref_inputs[0][actual],
-        ref_inputs[0][correct],
-        atol=atol,
-        rtol=rtol,
-        equal_nan=True,
-        exact_dtype=exact_dtype,
-    )
+    isScalar = len(ref_inputs[0].shape) == 0
+
+    if (not isScalar):
+        self.assertEqual(
+            ref_inputs[0][actual],
+            ref_inputs[0][correct],
+            atol=atol,
+            rtol=rtol,
+            equal_nan=True,
+            exact_dtype=exact_dtype,
+        )
+    else:
+        # Both actual and correct should be a scalar (0)
+        self.assertEqual(
+            actual,
+            correct,
+            atol=atol,
+            rtol=rtol,
+            equal_nan=True,
+            exact_dtype=exact_dtype,
+        )
 
 
 def sort_equal_checker(
@@ -363,12 +376,14 @@ def sort_equal_checker(
         exact_dtype=exact_dtype,
     )
 
-    self.assertEqual(
-        ref_inputs[0][actual.indices],
-        ref_inputs[0][correct.indices],
+    argsort_equal_checker(
+        self,
+        ref_inputs,
+        example_inputs,
+        correct.indices,
+        actual.indices,
         atol=atol,
         rtol=rtol,
-        equal_nan=True,
         exact_dtype=exact_dtype,
     )
 
