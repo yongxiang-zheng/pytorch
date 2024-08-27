@@ -2499,6 +2499,7 @@ class TestDimConstraints(TestCase):
         dim_constraints.add(s5 >= 2)
 
         dim_constraints.solve()
+        dim_constraints.remove_redundant_dynamic_results()
         self.assertEqual(
             dim_constraints._static_results,
             {
@@ -2517,9 +2518,8 @@ class TestDimConstraints(TestCase):
         self.assertEqual(
             dim_constraints._dynamic_results,
             {
-                "2 <= L['c'].size()[1]",
-                "L['d'].size()[1] == L['c'].size()[1]",
-                "L['e'].size()[1] == L['c'].size()[1]",
+                "dynamic_dim(L['e'], 1) == dynamic_dim(L['c'], 1)",
+                "dynamic_dim(L['d'], 1) == dynamic_dim(L['c'], 1)",
             },
         )
 
