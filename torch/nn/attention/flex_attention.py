@@ -51,7 +51,6 @@ class _ModificationType(Enum):
     UNKNOWN = 3
 
 
-@torch._dynamo.assume_constant_result
 def _get_mod_type(fn: Callable) -> _ModificationType:
     """Get the type of modification function.
     This function inspects the number of positional arguments of the function to determine
@@ -665,6 +664,7 @@ def create_mask(
     KV_LEN: int,
     device: str = "cuda",
     _compile: bool = False,
+    _is_mask_mod_override: bool = False,
 ) -> Tensor:
     r"""This function creates a mask tensor from a mod_fn function.
 
@@ -693,7 +693,10 @@ def create_mask(
         ctx = nullcontext()
     else:
         ctx = TransformGetItemToIndex()  # type: ignore[assignment]
-    mod_type = _get_mod_type(mod_fn)
+    if _is_mask_mod_override:
+        mod_type = _ModificationType.MASK_MOD
+    else:
+        mod_type = _get_mod_type(mod_fn)
 
     with ctx:
         if mod_type == _ModificationType.SCORE_MOD:
@@ -725,7 +728,7 @@ def _create_block_mask_inner(
     `create_block_mask` will compile this inner function and wrap the call to this
     with the __torch_function__ mode.
     """
-    mask_tensor = create_mask(mask_mod, B, H, Q_LEN, KV_LEN, device, _compile=True)
+    mask_tensor = create_mask(mask_mod, B, H, Q_LEN, KV_LEN, device, _compile=True, _is_mask_mod_override=True)
     partial_block_mask, full_block_mask = _convert_mask_to_block_mask(
         mask_tensor,
         KV_BLOCK_SIZE=KV_BLOCK_SIZE,
@@ -777,10 +780,6 @@ def create_block_mask(
             value = torch.randn(1, 1, 8192, 64, device="cuda", dtype=torch.float16)
             output = flex_attention(query, key, value, block_mask=block_mask)
     """
-    mod_type = _get_mod_type(mask_mod)
-    assert (
-        mod_type == _ModificationType.MASK_MOD
-    ), f"create-block_mask requires a mask_mod function! Got {mask_mod}"
     inner_func = _create_block_mask_inner
     if B is None:
         B = 1
