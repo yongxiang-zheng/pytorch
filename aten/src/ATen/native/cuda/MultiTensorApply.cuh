@@ -33,6 +33,9 @@ static constexpr int64_t kBlockSize = 512;
 // the kernels for 4KB kernel argument size.
 //
 // https://developer.nvidia.com/blog/cuda-12-1-supports-large-kernel-parameters/
+
+__global__ void dummy_kernel(void*) {}
+
 bool supports_large_kernel_arg() {
 #if !defined(USE_ROCM) && defined(CUDART_VERSION) && CUDART_VERSION >= 12010
   static std::optional<bool> supports_large_kernel_arg_ = std::nullopt;
@@ -40,7 +43,12 @@ bool supports_large_kernel_arg() {
     int driver_ver = 0;
     cudaDriverGetVersion(&driver_ver);
     cudaDeviceProp* prop = at::cuda::getCurrentDeviceProperties();
-    *supports_large_kernel_arg_ = (driver_ver >= 12010) && prop->major >= 7;
+    cudaFuncAttributes func_attr;
+    cudaFuncGetAttributes(&func_attr, (void*)dummy_kernel);
+    *supports_large_kernel_arg_ = (driver_ver >= 12010) && prop->major >= 7 &&
+        func_attr.binaryVersion >= 70;
+    // LOG(WARNING) << "binary version: " << func_attr.binaryVersion;
+    // LOG(WARNING) << "ptx version: " << func_attr.ptxVersion;
   }
   return *supports_large_kernel_arg_;
 #else
@@ -80,10 +88,10 @@ struct DepthToMaxConfig<false> {
   using TensorIdxType = unsigned char;
 };
 
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 700
-template <>
-struct DepthToMaxConfig<true> : DepthToMaxConfig<false> {};
-#else
+// #if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 700
+// template <>
+// struct DepthToMaxConfig<true> : DepthToMaxConfig<false> {};
+// #else
 template <>
 struct DepthToMaxConfig<true> {
   // TODO(yifu): These values are not yet optimally tuned. I simply multiplied
@@ -100,7 +108,7 @@ struct DepthToMaxConfig<true> {
       420};
   using TensorIdxType = uint16_t;
 };
-#endif
+// #endif
 
 template <typename T>
 __device__ __forceinline__ bool is_aligned(T* p) {
@@ -185,23 +193,30 @@ struct FusedOptimizerTensorListMetadata {
   int start_tensor_this_launch;
 };
 
+// Kernels with 32KB argument - always build host code but only build device
+// code for __CUDA_ARCH__ >= 700.
+#if !defined(__CUDA_ARCH__) || __CUDA_ARCH__ >= 700
 template <typename T, typename U, typename... ArgTypes>
 C10_LAUNCH_BOUNDS_1(kBlockSize)
-__global__ void multi_tensor_apply_kernel(
-    T tensorListMeta,
-    U callable,
-    ArgTypes... args) {
-#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 700
-  if constexpr (U::use_large_kernel_arg) {
-    CUDA_KERNEL_ASSERT(
-        false &&
-        "multi_tensor_apply with 32KB argument size is not supported "
-        "on devices with sm<70. This kernel should not be reachable.");
-    return;
-  }
-#endif
+__global__ typename std::enable_if<U::use_large_kernel_arg, void>::type
+multi_tensor_apply_kernel(T tensorListMeta, U callable, ArgTypes... args) {
   // Hand the chunk information to the user-supplied functor to process however
   // it likes.
+  callable(kChunkSize, tensorListMeta, args...);
+}
+#else
+#pragma nv_diag_suppress 114
+template <typename T, typename U, typename... ArgTypes>
+C10_LAUNCH_BOUNDS_1(kBlockSize)
+__global__ typename std::enable_if<U::use_large_kernel_arg, void>::type
+multi_tensor_apply_kernel(T tensorListMeta, U callable, ArgTypes... args);
+#pragma nv_diag_default 114
+#endif
+
+template <typename T, typename U, typename... ArgTypes>
+C10_LAUNCH_BOUNDS_1(kBlockSize)
+__global__ typename std::enable_if<!U::use_large_kernel_arg, void>::type
+multi_tensor_apply_kernel(T tensorListMeta, U callable, ArgTypes... args) {
   callable(kChunkSize, tensorListMeta, args...);
 }
 
