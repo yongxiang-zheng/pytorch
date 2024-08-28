@@ -23,7 +23,11 @@
 
 #if USE_X86_SIMD_SORT && (defined(CPU_CAPABILITY_AVX512) || defined(CPU_CAPABILITY_AVX2))
 #define XSS_COMPILE_TIME_SUPPORTED
+
+#ifdef _OPENMP
 #define XSS_USE_OPENMP
+#endif
+
 #include <src/x86simdsort-static-incl.h>
 #endif
 

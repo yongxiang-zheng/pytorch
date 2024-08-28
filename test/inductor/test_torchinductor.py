@@ -597,6 +597,7 @@ def check_model_gpu(
     assert_equal=True,
     check_gradient=False,
     check_has_compiled=True,
+    equal_checker=None,
     output_process_fn_grad=lambda x: x,
 ):
     kwargs = kwargs or {}
@@ -623,6 +624,7 @@ def check_model_gpu(
         assert_equal=assert_equal,
         check_gradient=check_gradient,
         check_has_compiled=check_has_compiled,
+        equal_checker=None,
         output_process_fn_grad=output_process_fn_grad,
     )
 
@@ -655,6 +657,7 @@ def check_model_gpu(
             assert_equal=assert_equal,
             check_gradient=check_gradient,
             check_has_compiled=check_has_compiled,
+            equal_checker=None,
             output_process_fn_grad=output_process_fn_grad,
         )
 

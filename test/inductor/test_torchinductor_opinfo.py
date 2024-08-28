@@ -333,9 +333,9 @@ def argsort_equal_checker(
     rtol=None,
     exact_dtype=True,
 ):
-    isScalar = len(ref_inputs[0].shape) == 0
+    is_scalar = len(ref_inputs[0].shape) == 0
 
-    if (not isScalar):
+    if not is_scalar:
         self.assertEqual(
             ref_inputs[0][actual],
             ref_inputs[0][correct],
