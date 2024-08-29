@@ -732,6 +732,13 @@ def true_noop(*args, **kwargs):
     return True
 
 
+def remove_self_clone(graph: torch.fx.Graph):
+    for node in graph.nodes:
+        if node.target == aten.copy_.default and node.args[0] == node.args[1]:
+            node.replace_all_uses_with(node.args[0])
+            graph.erase_node(node)
+
+
 def remove_noop_ops(graph: torch.fx.Graph):
     """
     Removes both operations that are essentially aten.clone and operations that are essentially aten.alias from the graph.
@@ -803,8 +810,8 @@ def decompose_auto_functionalized(graph):
     def replacement(match: Match, *args, **kwargs):
         from torch._higher_order_ops.auto_functionalize import auto_functionalized_dense
 
-        only_clone_these_tensors = tuple(
-            match.nodes[0].meta.get("only_clone_these_tensors", [])
+        only_clone_these_bases = tuple(
+            match.nodes[0].meta.get("only_clone_these_bases", [])
         )
 
         flat_args, spec = pytree.tree_flatten((args, kwargs))
@@ -814,7 +821,7 @@ def decompose_auto_functionalized(graph):
         # tracing a function with kwargs.
         def decomp(*flat_args):
             args, kwargs = pytree.tree_unflatten(flat_args, spec)
-            return auto_functionalized_dense(*args, only_clone_these_tensors, **kwargs)
+            return auto_functionalized_dense(*args, only_clone_these_bases, **kwargs)
 
         match.replace_by_example(decomp, flat_args, run_functional_passes=False)
 
