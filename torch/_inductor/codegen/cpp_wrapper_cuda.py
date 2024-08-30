@@ -151,7 +151,7 @@ class DeferredCudaGridLine(DeferredLineBase):
         grid_args_str = ", ".join(
             [cexpr(V.graph.sizevars.simplify(item)) for item in grid]
         )
-        return f"Grid {self.grid_var} = Grid({grid_args_str});"
+        return f"    Grid {self.grid_var} = Grid({grid_args_str});"
 
     def _new_line(self, line):
         return DeferredCudaGridLine(
@@ -257,9 +257,13 @@ class CppWrapperCuda(CppWrapperCpu):
         self.writeline(
             DeferredCudaKernelLine(
                 kernel_name,
-                kernel_var_name + """ = loadKernel("%s", "%s", %s, this->cubin_dir_);"""
+                """    """
+                + kernel_var_name
+                + """ = loadKernel("%s", "%s", %s, this->cubin_dir_);"""
                 if V.graph.aot_mode
-                else kernel_var_name + """ = loadKernel("%s", "%s", %s);""",
+                else """    """
+                + kernel_var_name
+                + """ = loadKernel("%s", "%s", %s);""",
                 keys,
             )
         )
@@ -410,7 +414,7 @@ class CppWrapperCuda(CppWrapperCpu):
         self.writeline(
             DeferredCudaKernelLine(
                 kernel_name,
-                r"launchKernel({}, {}, {}, {}, %s, %s, {}, {});".format(
+                r"    launchKernel({}, {}, {}, {}, %s, %s, {}, {});".format(
                     kernel_var_name,
                     f"{grid_var}.grid_x",
                     f"{grid_var}.grid_y",
