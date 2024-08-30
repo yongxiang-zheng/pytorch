@@ -2,7 +2,7 @@
 import functools
 import os
 from itertools import chain, count
-from typing import Any, Callable, List, Optional, Tuple, TYPE_CHECKING
+from typing import Any, Callable, List, Optional, Tuple, TYPE_CHECKING, Union
 
 import sympy
 
@@ -78,7 +78,7 @@ class DeferredCudaDefaultGrid:
         self.grid_callable = grid_callable
         self.grid_extra_kwargs = grid_extra_kwargs
 
-    def _process_grid(self, grid: List[Any]):
+    def _process_grid(self, grid: Union[List[Any], Tuple[Any, ...]]):
         if isinstance(grid, (list, tuple)):
             return [self._process_grid(e) for e in grid]
         else:
