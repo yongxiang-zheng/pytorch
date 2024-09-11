@@ -1849,6 +1849,12 @@ class AotCodeCompiler:
                 "darwin": _compile_consts_darwin,
             }[sys.platform](aot_constants)
 
+            other_obj_files = []
+            for entry in ROCmCodeCache.cache.values():
+                if entry.output_path.endswith(".o"):
+                    other_obj_files.append(entry.output_path)
+            other_o = " ".join(other_obj_files)
+
             if config.aot_inductor.package:
                 output_name, output_dir = get_name_and_dir_from_output_file_path(
                     output_so
@@ -1861,7 +1867,7 @@ class AotCodeCompiler:
                 )
                 so_builder = CppBuilder(
                     name=output_name,
-                    sources=[output_o, consts_o],
+                    sources=[output_o, consts_o, other_o],
                     output_dir=output_dir,
                     BuildOption=so_build_options,
                 )
@@ -1895,7 +1901,7 @@ class AotCodeCompiler:
                 )
                 so_builder = CppBuilder(
                     name=output_name,
-                    sources=[output_o, consts_o],
+                    sources=[output_o, consts_o, other_o],
                     output_dir=output_dir,
                     BuildOption=so_build_options,
                 )
