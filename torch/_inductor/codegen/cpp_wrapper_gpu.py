@@ -450,7 +450,7 @@ class CppWrapperGpu(CppWrapperCpu):
         if config.triton.autotune_at_compile_time:
             self.kernel_autotune_calls.writeline(line)
         if zero_fill:
-            if isinstance(nbytes, sympy.Expr):
+            if isinstance(nbytes, sympy.Expr) or not config.cpp_wrapper:
                 self.writeline(f"workspace.zero_(){self.ending}")
             else:
                 # TODO: remove this function to use the default WrapperCodegen behavior after service platform has zero_() symbol
