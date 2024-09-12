@@ -172,9 +172,9 @@ def cond(pred, true_fn, false_fn, operands):
     with _set_compilation_env():
         with torch._dynamo.utils.disable_cache_limit():
             with _temp_remove_pre_dispatch_torch_function_mode():
-                return torch.compile(_cond_op_wrapper, backend="eager", fullgraph=True)(
-                    pred, true_fn, false_fn, operands
-                )
+                return torch.compile(
+                    _cond_op_wrapper, backend="eager", fullgraph=True, force=True
+                )(pred, true_fn, false_fn, operands)
 
 
 def create_fw_bw_graph_branches(true_fn, false_fn, *operands):
