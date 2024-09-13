@@ -620,6 +620,7 @@ def _decompose_exported_program(
         _preserve_ops=_preserve_ops,
         joint_loss_index=joint_loss_index,
     )
+    gm.graph.eliminate_dead_code()
 
     # TODO unfortunately preserving graph-level metadata is not
     # working well with aot_export. So we manually copy it.
