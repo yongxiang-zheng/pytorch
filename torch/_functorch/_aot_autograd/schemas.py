@@ -10,7 +10,7 @@ import functools
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, NewType, Optional, Set, Union
+from typing import Any, Callable, Dict, List, NewType, Optional, Set, TypeAlias, Union
 
 import torch
 import torch.utils._pytree as pytree
@@ -29,6 +29,7 @@ from .utils import strict_zip
 
 
 zip = strict_zip
+
 
 OutputType = Enum(
     "OutputType",
@@ -248,6 +249,11 @@ class SubclassCreationMeta:
         self.subclass_type = get_types_for_subclass(self.original_subclass)
 
 
+TANGENT_MEMORY_FORMAT: TypeAlias = Union[
+    torch.memory_format, List["TANGENT_MEMORY_FORMAT"]
+]
+
+
 # This class encapsulates all aliasing + mutation info we need about the forward graph
 # See a more detailed overview of the edge case handling at
 # https://docs.google.com/document/d/19UoIh_SVrMy_b2Sx5ZaeOJttm6P0Qmyss2rdBuyfoic/edit
@@ -313,6 +319,13 @@ class ViewAndMutationMeta:
     # Instead, we keep any necessary subclass metadata necessary about each traced_tangent.
     # This list is generated after calling make_runtime_safe().
     traced_tangent_metas: Optional[List[Any]] = None
+
+    # for each tangent at index i:
+    #   if the tangent is a plain tensor, traced_tangent_memory_formats[i] holds the memory format
+    #     of the tangent that we need to coerce to
+    #   if the tangent is a subclass, traced_tangent_memory_formats[i] holds a list of memory formats,
+    #     containing the expected memory format of the subclass **and** all of its inner tensors
+    traced_tangent_memory_formats: Optional[List[TANGENT_MEMORY_FORMAT]] = None
 
     num_symints_saved_for_bw: Optional[int] = None
 
