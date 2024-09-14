@@ -154,8 +154,29 @@ class TestFullyShardCompile(FSDPTest):
         torch.compile(f, backend="aot_eager")(x)
         self.assertEqual(x, ref_x)
 
-    def _assert_no_aliased_graph_inputs(self, graph: torch.fx.Graph) -> None:
+    def _assert_no_aliased_unsharded_params_in_graph_inputs(
+        self, graph: torch.fx.Graph
+    ) -> None:
+        # FSDP2 unsharded params are mutated in the graph without going through functionalization.
+        # Therefore, we want to make sure they don't have aliases in the graph inputs, to make it easier
+        # for us to do the replacement of unsharded params with the all-gathered temporary buffer directly
+        # in downstream users in the graph.
         storage_id_to_graph_inputs = defaultdict(list)
+        # There are two kinds of unsharded params:
+        # 1) Ones that are sharded (thus 0-size) going into the graph.
+        # 2) Ones that are not sharded (thus full-size) going into the graph but will be resized to 0 within the graph.
+        zero_size_unsharded_param_graph_inputs = set()
+        full_size_unsharded_param_graph_inputs = set()
+        for node in graph.nodes:
+            if (
+                node.op == "call_function"
+                and node.target == torch.ops.inductor.resize_storage_bytes_.default
+                and node.args[0].op == "placeholder"
+                # TODO(yf225): somehow this is not true, need to investigate why.
+                # and node.args[0].meta["val"].untyped_storage().size() > 0
+                and node.args[1] == 0
+            ):
+                full_size_unsharded_param_graph_inputs.add(node.args[0])
         for node in graph.nodes:
             if node.op == "placeholder" and isinstance(
                 node.meta.get("val", None), torch.Tensor
@@ -163,16 +184,28 @@ class TestFullyShardCompile(FSDPTest):
                 storage_id_to_graph_inputs[
                     id(node.meta["val"].untyped_storage())
                 ].append(node)
-        no_aliased_graph_inputs = True
+                if (
+                    node.meta["val"].untyped_storage().size() == 0
+                    and node not in full_size_unsharded_param_graph_inputs
+                ):
+                    zero_size_unsharded_param_graph_inputs.add(node)
+        unsharded_param_graph_inputs = (
+            zero_size_unsharded_param_graph_inputs
+            | full_size_unsharded_param_graph_inputs
+        )
+        assert len(unsharded_param_graph_inputs) > 0
+        no_aliased_unsharded_params_in_graph_inputs = True
         err_msg = ""
         for aliased_graph_inputs in storage_id_to_graph_inputs.values():
-            if len(aliased_graph_inputs) > 1:
-                no_aliased_graph_inputs = False
+            if len(aliased_graph_inputs) > 1 and any(
+                x in unsharded_param_graph_inputs for x in aliased_graph_inputs
+            ):
+                no_aliased_unsharded_params_in_graph_inputs = False
                 err_msg += f"""\n
-Found aliased graph inputs: {aliased_graph_inputs},
+Found aliased unsharded param in graph inputs: {aliased_graph_inputs},
 val.shape: {[node.meta['val'].shape for node in aliased_graph_inputs]},
 """
-        self.assertTrue(no_aliased_graph_inputs, err_msg)
+        self.assertTrue(no_aliased_unsharded_params_in_graph_inputs, err_msg)
 
     def _check_fsdp_copy_and_resize_ops_count_in_graph(
         self,
@@ -359,7 +392,11 @@ val.shape: {[node.meta['val'].shape for node in aliased_graph_inputs]},
         return file_check
 
     def _test_traceable_fsdp(
-        self, model_init_fn, input_creation_fn, backend, fullgraph
+        self,
+        model_init_fn,
+        input_creation_fn,
+        backend,
+        fullgraph,
     ):
         def compiler_fn(compiled_autograd_backend):
             def _fn(gm):
@@ -421,7 +458,8 @@ val.shape: {[node.meta['val'].shape for node in aliased_graph_inputs]},
             inline_inbuilt_nn_modules=True,
             skip_fsdp_hooks=False,
         ), torch._functorch.config.patch(
-            recompute_views=True, cse=False
+            recompute_views=True,
+            cse=False,
         ), torch._inductor.config.patch(
             reorder_for_compute_comm_overlap=True,
             reorder_for_compute_comm_overlap_passes=[
@@ -429,7 +467,7 @@ val.shape: {[node.meta['val'].shape for node in aliased_graph_inputs]},
                 "raise_comms",
                 "reorder_compute_for_overlap",
             ],
-            post_grad_custom_pre_pass=self._assert_no_aliased_graph_inputs
+            post_grad_custom_pre_pass=self._assert_no_aliased_unsharded_params_in_graph_inputs
             if fullgraph
             else None,
         ):
@@ -677,7 +715,9 @@ val.shape: {[node.meta['val'].shape for node in aliased_graph_inputs]},
                     "Expected at least 3 separate lowerings to Triton code, which means at least 1 graph break in FWD graph",
                 )
 
-    def _create_transformer_factory_fns(self, all_requires_grad):
+    def _create_transformer_factory_fns(
+        self, all_requires_grad, *, activation_checkpoint=False
+    ):
         seq_len = 16
         vocab_size = 8
         n_layers = 3
@@ -689,6 +729,7 @@ val.shape: {[node.meta['val'].shape for node in aliased_graph_inputs]},
             model_args = ModelArgs(
                 vocab_size=vocab_size,
                 n_layers=n_layers,
+                checkpoint_activations=activation_checkpoint,
             )
             model = Transformer(model_args)
             if not all_requires_grad:
@@ -775,9 +816,11 @@ val.shape: {[node.meta['val'].shape for node in aliased_graph_inputs]},
     @torch._inductor.config.patch(fallback_random=True)
     def test_transformer_backend_inductor(self):
         # TODO: enable fullgraph=False case
-        for fullgraph, all_requires_grad in itertools.product([True], [True, False]):
+        for fullgraph, all_requires_grad, activation_checkpoint in itertools.product(
+            [True], [True, False], [True, False]
+        ):
             log.warning(
-                f"fullgraph={fullgraph}, all_requires_grad={all_requires_grad}"  # noqa: G004, G001
+                f"fullgraph={fullgraph}, all_requires_grad={all_requires_grad}, activation_checkpoint={activation_checkpoint}"  # noqa: G004, G001
             )
             with self._maybe_add_graph_break_to_sdpa(
                 fullgraph
@@ -802,7 +845,8 @@ val.shape: {[node.meta['val'].shape for node in aliased_graph_inputs]},
                 _, triton_codes = run_and_get_code(
                     lambda: self._test_traceable_fsdp(
                         *self._create_transformer_factory_fns(
-                            all_requires_grad=all_requires_grad
+                            all_requires_grad=all_requires_grad,
+                            activation_checkpoint=activation_checkpoint,
                         ),
                         "inductor",
                         fullgraph=fullgraph,
